@@ -29,9 +29,8 @@ export function parseVideoId(input: string): string | null {
     if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
     const parts = url.pathname.split("/").filter(Boolean);
     const idx = parts.findIndex((p) => ["embed", "shorts", "live", "v"].includes(p));
-    if (idx >= 0 && parts[idx + 1] && /^[a-zA-Z0-9_-]{11}$/.test(parts[idx + 1])) {
-      return parts[idx + 1];
-    }
+    const candidate = idx >= 0 ? parts[idx + 1] : undefined;
+    if (candidate && /^[a-zA-Z0-9_-]{11}$/.test(candidate)) return candidate;
   }
   return null;
 }
@@ -149,8 +148,8 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptLine[]
     const re = /<text start="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(body))) {
-      const text = decodeEntities(m[2].replace(/<[^>]+>/g, ""));
-      if (text) lines.push({ start: Math.round(parseFloat(m[1])), text });
+      const text = decodeEntities((m[2] ?? "").replace(/<[^>]+>/g, ""));
+      if (text) lines.push({ start: Math.round(parseFloat(m[1] ?? "0")), text });
     }
   }
   if (lines.length === 0) {
