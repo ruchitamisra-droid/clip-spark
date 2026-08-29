@@ -77,8 +77,8 @@ function decodeEntities(s: string): string {
     .trim();
 }
 
-async function getCaptionTracks(videoId: string): Promise<CaptionTrack[]> {
-  const res = await fetch(`https://www.youtube.com/watch?v=${videoId}&hl=en`, {
+async function tracksFromWatchPage(videoId: string): Promise<CaptionTrack[]> {
+  const res = await fetch(`https://www.youtube.com/watch?v=${videoId}&hl=en&bpctr=9999999999&has_verified=1`, {
     headers: { "user-agent": UA, "accept-language": "en-US,en;q=0.9" },
   });
   const html = await res.text();
@@ -107,6 +107,64 @@ async function getCaptionTracks(videoId: string): Promise<CaptionTrack[]> {
   }
 }
 
+const INNERTUBE_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
+
+const INNERTUBE_CLIENTS = [
+  {
+    clientName: "ANDROID",
+    clientVersion: "19.09.37",
+    androidSdkVersion: 30,
+    hl: "en",
+    userAgent: "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
+  },
+  {
+    clientName: "IOS",
+    clientVersion: "19.09.3",
+    hl: "en",
+    userAgent: "com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)",
+  },
+  { clientName: "WEB", clientVersion: "2.20240401.00.00", hl: "en", userAgent: UA },
+  {
+    clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+    clientVersion: "2.0",
+    hl: "en",
+    clientScreen: "EMBED",
+    userAgent: UA,
+  },
+];
+
+async function tracksFromInnertube(videoId: string): Promise<CaptionTrack[]> {
+  for (const { userAgent, ...client } of INNERTUBE_CLIENTS) {
+    try {
+      const res = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_KEY}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "user-agent": userAgent },
+        body: JSON.stringify({
+          context: { client, thirdParty: { embedUrl: "https://www.youtube.com" } },
+          videoId,
+          contentCheckOk: true,
+          racyCheckOk: true,
+        }),
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        captions?: { playerCaptionsTracklistRenderer?: { captionTracks?: CaptionTrack[] } };
+      };
+      const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+      if (tracks?.length) return tracks;
+    } catch {
+      // try next client
+    }
+  }
+  return [];
+}
+
+async function getCaptionTracks(videoId: string): Promise<CaptionTrack[]> {
+  const fromPage = await tracksFromWatchPage(videoId);
+  if (fromPage.length) return fromPage;
+  return tracksFromInnertube(videoId);
+}
+
 function pickTrack(tracks: CaptionTrack[]): CaptionTrack | undefined {
   return (
     tracks.find((t) => t.languageCode === "en" && t.kind !== "asr") ??
@@ -114,6 +172,7 @@ function pickTrack(tracks: CaptionTrack[]): CaptionTrack | undefined {
     tracks[0]
   );
 }
+
 
 export async function fetchTranscript(videoId: string): Promise<TranscriptLine[]> {
   const tracks = await getCaptionTracks(videoId);
