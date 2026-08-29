@@ -71,7 +71,11 @@ function transcriptLog(method: string, detail: string): void {
   console.warn(`[ClipScout transcript] ${method}: ${detail}`);
 }
 
-async function fetchWithRetry(method: string, input: string, init?: RequestInit): Promise<Response | null> {
+async function fetchWithRetry(
+  method: string,
+  input: string,
+  init?: RequestInit,
+): Promise<Response | null> {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const response = await fetch(input, init);
@@ -172,16 +176,20 @@ async function tracksFromInnertube(videoId: string): Promise<CaptionTrack[]> {
   for (const { userAgent, ...client } of INNERTUBE_CLIENTS) {
     const method = `InnerTube player ${client.clientName}`;
     try {
-      const res = await fetchWithRetry(method, `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_KEY}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "user-agent": userAgent },
-        body: JSON.stringify({
-          context: { client, thirdParty: { embedUrl: "https://www.youtube.com" } },
-          videoId,
-          contentCheckOk: true,
-          racyCheckOk: true,
-        }),
-      });
+      const res = await fetchWithRetry(
+        method,
+        `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_KEY}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", "user-agent": userAgent },
+          body: JSON.stringify({
+            context: { client, thirdParty: { embedUrl: "https://www.youtube.com" } },
+            videoId,
+            contentCheckOk: true,
+            racyCheckOk: true,
+          }),
+        },
+      );
       if (!res) continue;
       const data = (await res.json()) as {
         captions?: { playerCaptionsTracklistRenderer?: { captionTracks?: CaptionTrack[] } };
@@ -190,7 +198,10 @@ async function tracksFromInnertube(videoId: string): Promise<CaptionTrack[]> {
       if (tracks?.length) collected.push(...tracks);
       else transcriptLog(method, "HTTP 200 response contained no caption tracks");
     } catch (error) {
-      transcriptLog(method, `response parsing failed: ${error instanceof Error ? error.message : "unknown error"}`);
+      transcriptLog(
+        method,
+        `response parsing failed: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
     }
   }
   return collected;
@@ -283,7 +294,8 @@ function parseTranscriptRenderer(payload: unknown): TranscriptLine[] {
     if (segment && typeof segment === "object") {
       const item = segment as JsonRecord;
       const rawStart = item["startMs"];
-      const startMs = typeof rawStart === "string" || typeof rawStart === "number" ? Number(rawStart) : 0;
+      const startMs =
+        typeof rawStart === "string" || typeof rawStart === "number" ? Number(rawStart) : 0;
       const text = decodeEntities(textFromRenderer(item["snippet"]));
       if (text) lines.push({ start: Math.round(startMs / 1000), text });
     }
@@ -303,39 +315,53 @@ function decodeJsonString(value: string): string {
 
 /** Fallback: the transcript panel API used by youtube.com itself. */
 async function transcriptFromPanel(videoId: string): Promise<TranscriptLine[]> {
-  const res = await fetchWithRetry("transcript panel page", `https://www.youtube.com/watch?v=${videoId}&hl=en`, {
-    headers: { "user-agent": UA, "accept-language": "en-US,en;q=0.9" },
-  });
+  const res = await fetchWithRetry(
+    "transcript panel page",
+    `https://www.youtube.com/watch?v=${videoId}&hl=en`,
+    {
+      headers: { "user-agent": UA, "accept-language": "en-US,en;q=0.9" },
+    },
+  );
   if (!res) return [];
   const html = await res.text();
   const visitorData = /"visitorData":"([^"]+)"/.exec(html)?.[1];
-  const clientVersion = /"INNERTUBE_CLIENT_VERSION":"([^"]+)"/.exec(html)?.[1] ?? "2.20240401.00.00";
-  const params = [...html.matchAll(/"getTranscriptEndpoint":\{"params":"((?:[^"\\]|\\.)+)"/g)].map((match) =>
-    decodeJsonString(match[1] ?? ""),
+  const clientVersion =
+    /"INNERTUBE_CLIENT_VERSION":"([^"]+)"/.exec(html)?.[1] ?? "2.20240401.00.00";
+  const params = [...html.matchAll(/"getTranscriptEndpoint":\{"params":"((?:[^"\\]|\\.)+)"/g)].map(
+    (match) => decodeJsonString(match[1] ?? ""),
   );
   const uniqueParams = [...new Set(params.filter(Boolean))];
   if (!uniqueParams.length) {
-    transcriptLog("transcript panel page", "HTTP 200 response contained no transcript endpoint parameters");
+    transcriptLog(
+      "transcript panel page",
+      "HTTP 200 response contained no transcript endpoint parameters",
+    );
     return [];
   }
 
   for (const [index, panelParams] of uniqueParams.entries()) {
     const method = `InnerTube get_transcript option ${index + 1}`;
     try {
-      const api = await fetchWithRetry(method, "https://www.youtube.com/youtubei/v1/get_transcript?prettyPrint=false", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "user-agent": UA,
-          origin: "https://www.youtube.com",
-          referer: `https://www.youtube.com/watch?v=${videoId}`,
-          ...(visitorData ? { "x-goog-visitor-id": visitorData } : {}),
+      const api = await fetchWithRetry(
+        method,
+        "https://www.youtube.com/youtubei/v1/get_transcript?prettyPrint=false",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "user-agent": UA,
+            origin: "https://www.youtube.com",
+            referer: `https://www.youtube.com/watch?v=${videoId}`,
+            ...(visitorData ? { "x-goog-visitor-id": visitorData } : {}),
+          },
+          body: JSON.stringify({
+            context: {
+              client: { clientName: "WEB", clientVersion, hl: "en", gl: "US", visitorData },
+            },
+            params: panelParams,
+          }),
         },
-        body: JSON.stringify({
-          context: { client: { clientName: "WEB", clientVersion, hl: "en", gl: "US", visitorData } },
-          params: panelParams,
-        }),
-      });
+      );
       if (!api) continue;
       const body = await api.text();
       if (!body.trim()) {
@@ -347,7 +373,10 @@ async function transcriptFromPanel(videoId: string): Promise<TranscriptLine[]> {
       if (lines.length) return lines;
       transcriptLog(method, "HTTP 200 response contained no transcript segments");
     } catch (error) {
-      transcriptLog(method, `response parsing failed: ${error instanceof Error ? error.message : "unknown error"}`);
+      transcriptLog(
+        method,
+        `response parsing failed: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
     }
   }
   return [];
@@ -355,7 +384,11 @@ async function transcriptFromPanel(videoId: string): Promise<TranscriptLine[]> {
 
 export async function fetchTranscript(videoId: string): Promise<TranscriptLine[]> {
   const tracks = await getCaptionTracks(videoId);
-  if (!tracks.length) transcriptLog("caption discovery", "all watch-page and InnerTube player methods returned no tracks");
+  if (!tracks.length)
+    transcriptLog(
+      "caption discovery",
+      "all watch-page and InnerTube player methods returned no tracks",
+    );
 
   for (const [trackIndex, track] of orderedTracks(tracks).entries()) {
     for (const format of ["json3", "srv1", "srv3", "default"] as const) {
@@ -378,7 +411,10 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptLine[]
         if (lines.length) return lines;
         transcriptLog(method, "HTTP 200 response contained no usable caption text");
       } catch (error) {
-        transcriptLog(method, `response parsing failed: ${error instanceof Error ? error.message : "unknown error"}`);
+        transcriptLog(
+          method,
+          `response parsing failed: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
       }
     }
   }
@@ -391,7 +427,6 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptLine[]
     "We couldn't get a transcript for this video. It may not have captions, or YouTube is blocking caption downloads for it right now — try another episode that has captions turned on.",
   );
 }
-
 
 export function formatTranscript(lines: TranscriptLine[]): string {
   // Merge into ~10 second chunks to keep the prompt compact.
@@ -470,10 +505,16 @@ export async function analyzeTranscript(
   });
 
   if (res.status === 429) {
-    throw new ClipScoutError("rate_limit", "The AI is busy right now — please try again in a moment.");
+    throw new ClipScoutError(
+      "rate_limit",
+      "The AI is busy right now — please try again in a moment.",
+    );
   }
   if (res.status === 402) {
-    throw new ClipScoutError("credits", "AI credits are exhausted. Add credits in your workspace to keep analyzing.");
+    throw new ClipScoutError(
+      "credits",
+      "AI credits are exhausted. Add credits in your workspace to keep analyzing.",
+    );
   }
   if (!res.ok) {
     throw new ClipScoutError("ai_error", "The AI analysis failed. Please try again.");
@@ -484,7 +525,10 @@ export async function analyzeTranscript(
   };
   const args = data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
   if (!args) {
-    throw new ClipScoutError("ai_error", "The AI didn't return any clip suggestions. Please try again.");
+    throw new ClipScoutError(
+      "ai_error",
+      "The AI didn't return any clip suggestions. Please try again.",
+    );
   }
   let parsed: { clips?: Clip[] };
   try {
@@ -501,7 +545,10 @@ export async function analyzeTranscript(
     return { start_time_seconds: start, end_time_seconds: end, title: c.title, reason: c.reason };
   });
   if (clips.length === 0) {
-    throw new ClipScoutError("ai_error", "The AI didn't find any clip-worthy moments. Please try again.");
+    throw new ClipScoutError(
+      "ai_error",
+      "The AI didn't find any clip-worthy moments. Please try again.",
+    );
   }
   return clips;
 }
