@@ -174,58 +174,111 @@ function pickTrack(tracks: CaptionTrack[]): CaptionTrack | undefined {
 }
 
 
+/** Fallback: the transcript panel API used by youtube.com itself. */
+async function transcriptFromPanel(videoId: string): Promise<TranscriptLine[]> {
+  const res = await fetch(`https://www.youtube.com/watch?v=${videoId}&hl=en`, {
+    headers: { "user-agent": UA, "accept-language": "en-US,en;q=0.9" },
+  });
+  const html = await res.text();
+  const params = /"getTranscriptEndpoint":\{"params":"([^"]+)"/.exec(html)?.[1];
+  const visitorData = /"visitorData":"([^"]+)"/.exec(html)?.[1];
+  const clientVersion = /"INNERTUBE_CLIENT_VERSION":"([^"]+)"/.exec(html)?.[1] ?? "2.20240401.00.00";
+  if (!params) return [];
+
+  const api = await fetch("https://www.youtube.com/youtubei/v1/get_transcript?prettyPrint=false", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "user-agent": UA,
+      origin: "https://www.youtube.com",
+      referer: `https://www.youtube.com/watch?v=${videoId}`,
+      ...(visitorData ? { "x-goog-visitor-id": visitorData } : {}),
+    },
+    body: JSON.stringify({
+      context: { client: { clientName: "WEB", clientVersion, hl: "en", gl: "US", visitorData } },
+      params,
+    }),
+  });
+  if (!api.ok) return [];
+  const text = await api.text();
+  const lines: TranscriptLine[] = [];
+  const re =
+    /"transcriptSegmentRenderer":\{"startMs":"(\d+)","endMs":"\d+","snippet":\{("runs":\[[\s\S]*?\]|"simpleText":"[\s\S]*?")\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const chunk = m[2] ?? "";
+    const parts = [...chunk.matchAll(/"text":"((?:[^"\\]|\\.)*)"/g)].map((x) => x[1] ?? "");
+    const simple = /"simpleText":"((?:[^"\\]|\\.)*)"/.exec(chunk)?.[1];
+    let raw = parts.length ? parts.join("") : (simple ?? "");
+    try {
+      raw = JSON.parse(`"${raw}"`) as string;
+    } catch {
+      /* keep raw */
+    }
+    const clean = decodeEntities(raw);
+    if (clean) lines.push({ start: Math.round(Number(m[1]) / 1000), text: clean });
+  }
+  return lines;
+}
+
 export async function fetchTranscript(videoId: string): Promise<TranscriptLine[]> {
+  const lines: TranscriptLine[] = [];
   const tracks = await getCaptionTracks(videoId);
   const track = pickTrack(tracks);
-  if (!track?.baseUrl) {
-    throw new ClipScoutError(
-      "no_transcript",
-      "This video doesn't have captions available, so there's no transcript to analyze. Try another video that has captions or subtitles turned on.",
-    );
+
+  if (track?.baseUrl) {
+    const base = track.baseUrl.replace(/&fmt=\w+/, "");
+    for (const suffix of ["&fmt=json3", "&fmt=srv1", ""]) {
+      let body = "";
+      try {
+        const res = await fetch(base + suffix, {
+          headers: { "user-agent": UA, referer: "https://www.youtube.com/" },
+        });
+        if (!res.ok) continue;
+        body = await res.text();
+      } catch {
+        continue;
+      }
+      if (!body.trim()) continue;
+
+      try {
+        const json = JSON.parse(body) as {
+          events?: { tStartMs?: number; segs?: { utf8?: string }[] }[];
+        };
+        for (const ev of json.events ?? []) {
+          const text = decodeEntities((ev.segs ?? []).map((s) => s.utf8 ?? "").join(""));
+          if (!text) continue;
+          lines.push({ start: Math.round((ev.tStartMs ?? 0) / 1000), text });
+        }
+      } catch {
+        const re = /<text start="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(body))) {
+          const text = decodeEntities((m[2] ?? "").replace(/<[^>]+>/g, ""));
+          if (text) lines.push({ start: Math.round(parseFloat(m[1] ?? "0")), text });
+        }
+      }
+      if (lines.length > 0) break;
+    }
   }
-  const base = track.baseUrl.replace(/&fmt=\w+/, "");
-  const lines: TranscriptLine[] = [];
 
-  for (const suffix of ["&fmt=json3", "&fmt=srv1", ""]) {
-    let body = "";
+  if (lines.length === 0) {
     try {
-      const res = await fetch(base + suffix, { headers: { "user-agent": UA } });
-      if (!res.ok) continue;
-      body = await res.text();
+      lines.push(...(await transcriptFromPanel(videoId)));
     } catch {
-      continue;
+      /* fall through to error below */
     }
-    if (!body.trim()) continue;
-
-    try {
-      const json = JSON.parse(body) as {
-        events?: { tStartMs?: number; segs?: { utf8?: string }[] }[];
-      };
-      for (const ev of json.events ?? []) {
-        const text = decodeEntities((ev.segs ?? []).map((s) => s.utf8 ?? "").join(""));
-        if (!text) continue;
-        lines.push({ start: Math.round((ev.tStartMs ?? 0) / 1000), text });
-      }
-    } catch {
-      // XML fallback
-      const re = /<text start="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(body))) {
-        const text = decodeEntities((m[2] ?? "").replace(/<[^>]+>/g, ""));
-        if (text) lines.push({ start: Math.round(parseFloat(m[1] ?? "0")), text });
-      }
-    }
-    if (lines.length > 0) break;
   }
 
   if (lines.length === 0) {
     throw new ClipScoutError(
       "no_transcript",
-      "This video has no usable caption text to analyze. Try another video with captions.",
+      "We couldn't get a transcript for this video. It may not have captions, or YouTube is blocking caption downloads for it right now — try another episode that has captions turned on.",
     );
   }
   return lines;
 }
+
 
 export function formatTranscript(lines: TranscriptLine[]): string {
   // Merge into ~10 second chunks to keep the prompt compact.
