@@ -265,6 +265,16 @@ function parseTimedTextXml(body: string): TranscriptLine[] {
   return lines;
 }
 
+function parseCaptionBody(body: string): TranscriptLine[] {
+  try {
+    const jsonLines = parseJson3(body);
+    if (jsonLines.length) return jsonLines;
+  } catch {
+    // Some caption URLs ignore fmt and return XML instead.
+  }
+  return parseTimedTextXml(body);
+}
+
 type JsonRecord = Record<string, unknown>;
 
 function textFromRenderer(value: unknown): string {
@@ -407,7 +417,7 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptLine[]
           transcriptLog(method, "HTTP 200 response was empty");
           continue;
         }
-        const lines = format === "json3" ? parseJson3(body) : parseTimedTextXml(body);
+        const lines = parseCaptionBody(body);
         if (lines.length) return lines;
         transcriptLog(method, "HTTP 200 response contained no usable caption text");
       } catch (error) {

@@ -23,6 +23,8 @@ export const Route = createFileRoute("/")({
         content:
           "AI transcript analysis that ranks the 5 most clip-worthy moments in any YouTube podcast episode.",
       },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
     ],
   }),
   component: Index,
