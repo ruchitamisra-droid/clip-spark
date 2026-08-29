@@ -259,10 +259,14 @@ type JsonRecord = Record<string, unknown>;
 function textFromRenderer(value: unknown): string {
   if (!value || typeof value !== "object") return "";
   const renderer = value as JsonRecord;
-  if (typeof renderer.simpleText === "string") return renderer.simpleText;
-  if (!Array.isArray(renderer.runs)) return "";
-  return renderer.runs
-    .map((run) => (run && typeof run === "object" && typeof (run as JsonRecord).text === "string" ? (run as JsonRecord).text : ""))
+  if (typeof renderer["simpleText"] === "string") return renderer["simpleText"];
+  if (!Array.isArray(renderer["runs"])) return "";
+  return renderer["runs"]
+    .map((run) =>
+      run && typeof run === "object" && typeof (run as JsonRecord)["text"] === "string"
+        ? (run as JsonRecord)["text"]
+        : "",
+    )
     .join("");
 }
 
@@ -275,12 +279,12 @@ function parseTranscriptRenderer(payload: unknown): TranscriptLine[] {
       return;
     }
     const record = value as JsonRecord;
-    const segment = record.transcriptSegmentRenderer;
+    const segment = record["transcriptSegmentRenderer"];
     if (segment && typeof segment === "object") {
       const item = segment as JsonRecord;
-      const rawStart = item.startMs;
+      const rawStart = item["startMs"];
       const startMs = typeof rawStart === "string" || typeof rawStart === "number" ? Number(rawStart) : 0;
-      const text = decodeEntities(textFromRenderer(item.snippet));
+      const text = decodeEntities(textFromRenderer(item["snippet"]));
       if (text) lines.push({ start: Math.round(startMs / 1000), text });
     }
     Object.values(record).forEach(visit);
