@@ -2,7 +2,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { Clapperboard, Copy, Check, ExternalLink, Loader2, Search, AlertTriangle } from "lucide-react";
+import {
+  Clapperboard,
+  Copy,
+  Check,
+  ExternalLink,
+  Loader2,
+  Search,
+  AlertTriangle,
+} from "lucide-react";
 
 import { analyzeVideo, listAnalyses, type Analysis } from "@/lib/clips.functions";
 import { Button } from "@/components/ui/button";
@@ -36,7 +44,15 @@ function fmt(s: number) {
   return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
-function ClipCard({ clip, rank, videoId }: { clip: Analysis["clips"][number]; rank: number; videoId: string }) {
+function ClipCard({
+  clip,
+  rank,
+  videoId,
+}: {
+  clip: Analysis["clips"][number];
+  rank: number;
+  videoId: string;
+}) {
   const [copied, setCopied] = useState(false);
   const link = `https://www.youtube.com/watch?v=${videoId}&t=${clip.start_time_seconds}s`;
   const duration = clip.end_time_seconds - clip.start_time_seconds;
@@ -175,7 +191,9 @@ function Index() {
               )}
               <div className="min-w-0">
                 <h2 className="truncate text-lg font-semibold">{analysis.title}</h2>
-                <p className="text-sm text-muted-foreground">{analysis.channel ?? "Unknown channel"}</p>
+                <p className="text-sm text-muted-foreground">
+                  {analysis.channel ?? "Unknown channel"}
+                </p>
               </div>
             </div>
 
