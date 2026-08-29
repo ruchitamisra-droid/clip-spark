@@ -183,34 +183,41 @@ export async function fetchTranscript(videoId: string): Promise<TranscriptLine[]
       "This video doesn't have captions available, so there's no transcript to analyze. Try another video that has captions or subtitles turned on.",
     );
   }
-  const url = `${track.baseUrl.replace(/&fmt=\w+/, "")}&fmt=json3`;
-  const res = await fetch(url, { headers: { "user-agent": UA } });
-  if (!res.ok) {
-    throw new ClipScoutError(
-      "no_transcript",
-      "We couldn't load the captions for this video. It may have captions disabled.",
-    );
-  }
-  const body = await res.text();
+  const base = track.baseUrl.replace(/&fmt=\w+/, "");
   const lines: TranscriptLine[] = [];
-  try {
-    const json = JSON.parse(body) as {
-      events?: { tStartMs?: number; segs?: { utf8?: string }[] }[];
-    };
-    for (const ev of json.events ?? []) {
-      const text = decodeEntities((ev.segs ?? []).map((s) => s.utf8 ?? "").join(""));
-      if (!text) continue;
-      lines.push({ start: Math.round((ev.tStartMs ?? 0) / 1000), text });
+
+  for (const suffix of ["&fmt=json3", "&fmt=srv1", ""]) {
+    let body = "";
+    try {
+      const res = await fetch(base + suffix, { headers: { "user-agent": UA } });
+      if (!res.ok) continue;
+      body = await res.text();
+    } catch {
+      continue;
     }
-  } catch {
-    // XML fallback
-    const re = /<text start="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(body))) {
-      const text = decodeEntities((m[2] ?? "").replace(/<[^>]+>/g, ""));
-      if (text) lines.push({ start: Math.round(parseFloat(m[1] ?? "0")), text });
+    if (!body.trim()) continue;
+
+    try {
+      const json = JSON.parse(body) as {
+        events?: { tStartMs?: number; segs?: { utf8?: string }[] }[];
+      };
+      for (const ev of json.events ?? []) {
+        const text = decodeEntities((ev.segs ?? []).map((s) => s.utf8 ?? "").join(""));
+        if (!text) continue;
+        lines.push({ start: Math.round((ev.tStartMs ?? 0) / 1000), text });
+      }
+    } catch {
+      // XML fallback
+      const re = /<text start="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(body))) {
+        const text = decodeEntities((m[2] ?? "").replace(/<[^>]+>/g, ""));
+        if (text) lines.push({ start: Math.round(parseFloat(m[1] ?? "0")), text });
+      }
     }
+    if (lines.length > 0) break;
   }
+
   if (lines.length === 0) {
     throw new ClipScoutError(
       "no_transcript",
